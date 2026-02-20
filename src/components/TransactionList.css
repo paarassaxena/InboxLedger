@@ -1,0 +1,86 @@
+.transactions-card {
+    display: flex;
+    flex-direction: column;
+}
+
+.transactions-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.badge {
+    background: rgba(88, 166, 255, 0.15);
+    color: var(--accent-color);
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    border: 1px solid rgba(88, 166, 255, 0.3);
+}
+
+.transactions-table-container {
+    overflow-x: auto;
+}
+
+.transactions-table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+}
+
+.transactions-table th {
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--panel-border);
+}
+
+.transactions-table td {
+    padding: 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    vertical-align: middle;
+}
+
+.transaction-row {
+    transition: background-color 0.2s ease;
+}
+
+.transaction-row:hover {
+    background-color: rgba(255, 255, 255, 0.03);
+}
+
+.align-right {
+    text-align: right;
+}
+
+.col-date {
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    white-space: nowrap;
+}
+
+.col-merchant {
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.category-tag {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    background: rgba(255, 255, 255, 0.05);
+    color: #c9d1d9;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.col-amount {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}

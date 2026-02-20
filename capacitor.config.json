@@ -1,0 +1,16 @@
+{
+  "appId": "com.amex.tracker",
+  "appName": "Amex Tracker",
+  "webDir": "dist",
+  "plugins": {
+    "GoogleAuth": {
+      "scopes": [
+        "profile",
+        "email",
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ],
+      "serverClientId": "1054722825357-jep07khpk44ttt30oqhql7kj61iujto4.apps.googleusercontent.com",
+      "forceCodeForRefreshToken": true
+    }
+  }
+}
