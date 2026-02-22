@@ -11,14 +11,20 @@ const TransactionList = ({ transactions = [] }) => {
         );
     }
 
-    // Sort by date descending
-    const sorted = [...transactions].sort((a, b) => new Date(b.date) - new Date(a.date));
+    // Filter for current year
+    const currentYear = new Date().getFullYear();
+    const currentYearTransactions = transactions
+        .filter(t => new Date(t.date).getFullYear() === currentYear)
+        .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    // Limit to 20
+    const recentTransactions = currentYearTransactions.slice(0, 20);
 
     return (
         <div className="glass-panel transactions-card">
             <div className="transactions-header">
                 <h2>Recent Transactions</h2>
-                <span className="badge">{transactions.length} total</span>
+                <span className="badge">Showing {recentTransactions.length} of {currentYearTransactions.length} total</span>
             </div>
 
             <div className="transactions-table-container">
@@ -32,7 +38,7 @@ const TransactionList = ({ transactions = [] }) => {
                         </tr>
                     </thead>
                     <tbody>
-                        {sorted.map((t) => {
+                        {recentTransactions.map((t) => {
                             const dateObj = new Date(t.date);
                             const formattedDate = dateObj.toLocaleDateString('en-US', {
                                 month: 'short', day: 'numeric', year: 'numeric'

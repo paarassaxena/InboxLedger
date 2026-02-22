@@ -1,29 +1,42 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 
 // Helper to check if a date is within the current month
-const isCurrentMonth = (dateString) => {
+const isCurrentMonth = (dateString, now) => {
     if (!dateString) return false;
     const date = new Date(dateString);
-    const now = new Date(); // Use system time
     return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+};
+
+// Helper to check if a date is within the current year
+const isCurrentYear = (dateString, now) => {
+    if (!dateString) return false;
+    const date = new Date(dateString);
+    return date.getFullYear() === now.getFullYear();
 };
 
 const CumulativeSpend = ({ transactions = [] }) => {
     const [threshold, setThreshold] = useState(() => {
-        const saved = localStorage.getItem('amex_spend_threshold');
+        const saved = localStorage.getItem('expense_spend_threshold');
         return saved ? parseFloat(saved) : 5000;
     });
 
     // Track if we've already notified during this session to prevent spam
     const hasNotified = useRef(false);
 
-    const total = useMemo(() => {
-        return transactions
-            .filter((t) => isCurrentMonth(t.date))
-            .reduce((sum, t) => sum + t.amount, 0);
+    const { mtdTotal, ytdTotal } = useMemo(() => {
+        const now = new Date();
+        let mtd = 0;
+        let ytd = 0;
+
+        transactions.forEach(t => {
+            if (isCurrentMonth(t.date, now)) mtd += t.amount;
+            if (isCurrentYear(t.date, now)) ytd += t.amount;
+        });
+
+        return { mtdTotal: mtd, ytdTotal: ytd };
     }, [transactions]);
 
-    const isExceeded = total > threshold;
+    const isExceeded = mtdTotal > threshold;
 
     useEffect(() => {
         // Request notification permission if not already granted
@@ -33,11 +46,11 @@ const CumulativeSpend = ({ transactions = [] }) => {
     }, []);
 
     useEffect(() => {
-        if (isExceeded && !hasNotified.current && total > 0) {
+        if (isExceeded && !hasNotified.current && mtdTotal > 0) {
             hasNotified.current = true;
             if (Notification.permission === 'granted') {
-                new Notification('Amex Tracker Alert', {
-                    body: `You have exceeded your monthly spend threshold of $${threshold}! Current spend: $${total.toFixed(2)}`,
+                new Notification('Expense Tracker Alert', {
+                    body: `You have exceeded your monthly spend threshold of $${threshold}! Current spend: $${mtdTotal.toFixed(2)}`,
                     icon: '/vite.svg'
                 });
             }
@@ -45,26 +58,31 @@ const CumulativeSpend = ({ transactions = [] }) => {
             // reset if total drops below threshold (e.g. new month)
             hasNotified.current = false;
         }
-    }, [isExceeded, total, threshold]);
+    }, [isExceeded, mtdTotal, threshold]);
 
     const handleThresholdChange = (e) => {
         const val = parseFloat(e.target.value) || 0;
         setThreshold(val);
-        localStorage.setItem('amex_spend_threshold', val.toString());
+        localStorage.setItem('expense_spend_threshold', val.toString());
         hasNotified.current = false; // reset notification state when threshold changes
     };
 
-    const formattedTotal = new Intl.NumberFormat('en-US', {
+    const formattedMtdTotal = new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'USD'
-    }).format(total);
+    }).format(mtdTotal);
+
+    const formattedYtdTotal = new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD'
+    }).format(ytdTotal);
 
     return (
         <div className={`glass-panel cumulative-card ${isExceeded ? 'danger-state' : ''}`}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <h2>Cumulative Spend</h2>
                 <div className="threshold-container">
-                    <span className="subtitle">Limit: $</span>
+                    <span className="subtitle">MTD Limit: $</span>
                     <input
                         type="number"
                         className="threshold-input"
@@ -76,10 +94,21 @@ const CumulativeSpend = ({ transactions = [] }) => {
                 </div>
             </div>
 
-            <div className="amount" style={isExceeded ? { background: 'none', WebkitTextFillColor: 'var(--danger-color)', color: 'var(--danger-color)' } : {}}>
-                {formattedTotal}
+            <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: '16px' }}>
+                <div>
+                    <div className="amount" style={isExceeded ? { background: 'none', WebkitTextFillColor: 'var(--danger-color)', color: 'var(--danger-color)', margin: '0' } : { margin: '0' }}>
+                        {formattedMtdTotal}
+                    </div>
+                    <p className="subtitle" style={{ marginTop: '8px' }}>Month to Date Spend</p>
+                </div>
+
+                <div style={{ textAlign: 'right', paddingBottom: '4px' }}>
+                    <div style={{ fontSize: '1.8rem', fontWeight: '600', color: 'var(--text-primary)' }}>
+                        {formattedYtdTotal}
+                    </div>
+                    <p className="subtitle" style={{ marginTop: '4px' }}>Year to Date Spend</p>
+                </div>
             </div>
-            <p className="subtitle">Month to Date Spend</p>
 
             {isExceeded && (
                 <div className="alert-banner">
