@@ -3,7 +3,7 @@ export const fetchCreditCardEmails = async (accessToken) => {
     try {
         // 1. Search for credit card expense emails across major banks
         // Correctly parenthesize the sender addresses so AND applies to all of them, not just Bank of America.
-        const query = encodeURIComponent('((from:americanexpress OR from:chase OR from:capitalone OR from:citi OR from:discover OR from:bankofamerica) AND (subject:charge OR subject:transaction OR subject:receipt OR subject:alert))');
+        const query = encodeURIComponent('((from:americanexpress OR from:chase OR from:capitalone OR from:citi OR from:discover OR from:bankofamerica OR from:usbank) AND (subject:charge OR subject:transaction OR subject:receipt OR subject:alert))');
         // Restore to 200 so we don't truncate valid older Amex emails behind a wall of Discover spam
         const searchUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=200`;
 
