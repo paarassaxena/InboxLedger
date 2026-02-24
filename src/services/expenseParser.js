@@ -1,3 +1,5 @@
+import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
+
 // Expanded categorizer
 export const categorizeMerchant = (merchantName) => {
     // Clean up merchant name: lowercased, strip common suffixes
@@ -57,147 +59,124 @@ const extractEmailBody = (payload) => {
 
 // Helper to strip HTML tags from a string and replace encoded entities
 const stripHtml = (html) => {
-    // Basic sanitization
-    let text = html.replace(/<[^>]*>?/gm, ' '); // Replace tags with space
+    let text = html.replace(/<[^>]*>?/gm, ' ');
     text = text.replace(/&nbsp;/g, ' ');
     text = text.replace(/&amp;/g, '&');
-    text = text.replace(/&[a-z]+;/g, ''); // Strip other entities
-    text = text.replace(/\*/g, ''); // Strip asterisks commonly used for footnotes
-    return text.replace(/\s+/g, ' ').trim(); // Normalize whitespace
+    text = text.replace(/&[a-z]+;/g, '');
+    text = text.replace(/\*/g, '');
+    return text.replace(/\s+/g, ' ').trim();
 };
 
-// Parses raw bank emails to extract the transaction details.
-export const parseExpenseEmails = (rawEmails) => {
+// Parses raw bank emails using Gemini LLM to reliably extract transaction details
+export const parseExpenseEmails = async (rawEmails, apiKey) => {
+    if (!apiKey) {
+        console.warn('Gemini API key is missing. Ensure VITE_GEMINI_API_KEY is set in .env.local.');
+        return [];
+    }
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+        model: "gemini-1.5-flash",
+        generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: {
+                type: SchemaType.OBJECT,
+                properties: {
+                    merchant: { type: SchemaType.STRING, description: "Name of the merchant where the charge was made" },
+                    amount: { type: SchemaType.NUMBER, description: "The single total dollar amount of the transaction as a number without currency symbols" },
+                    date: { type: SchemaType.STRING, description: "The date of the transaction in YYYY-MM-DD format" }
+                },
+                required: ["merchant", "amount", "date"]
+            }
+        }
+    });
+
     const transactions = [];
+
+    // Local Storage caching to prevent repeating LLM queries and burning rate limit
+    const CACHE_KEY = "expense_tracker_llm_cache";
+    let cache = {};
+    try {
+        const stored = localStorage.getItem(CACHE_KEY);
+        if (stored) cache = JSON.parse(stored);
+    } catch (e) { console.warn("Cache parse error", e); }
+
+    let cacheUpdated = false;
+    const delay = (ms) => new Promise(res => setTimeout(res, ms));
 
     for (const email of rawEmails) {
         try {
+            if (cache[email.id]) {
+                transactions.push(cache[email.id]);
+                continue; // Skip LLM call if already cached
+            }
+
             const payloadToExtract = email.payload || email;
             const rawBody = extractEmailBody(payloadToExtract);
-            // Crucial: Strip HTML tags so regexes don't catch garbage or fail to match across spans
             const body = stripHtml(rawBody);
 
-            if (body.toLowerCase().includes("wasn't present")) {
-                console.log("====== AMEX CARD NOT PRESENT RAW BODY ======\n" + body);
-            }
-
+            // Check headers for date fallback
             const headers = email.payload?.headers || email.headers || [];
-
-            // Get internal date
             const dateHeader = headers.find(h => h.name.toLowerCase() === 'date');
-            let dateStr = dateHeader ? dateHeader.value : new Date(parseInt(email.internalDate)).toISOString();
 
-            let dateObj = new Date(dateStr);
-            let finalIsoDate = new Date().toISOString(); // Default to today if parsing fails
-            try {
-                if (!isNaN(dateObj)) {
-                    finalIsoDate = dateObj.toISOString();
-                }
-            } catch (e) {
-                // Keep default today date on RangeError
+            // Prevent non-financial generic junk from triggering false positives
+            if (!body.includes('$') && !body.includes('Amount') && !body.includes('Charge')) {
+                continue;
             }
 
-            let merchant = 'Unknown Merchant';
-            let finalAmountMatch = null;
+            // Limit body size to not blow up context unnecessary for alerts
+            const promptStr = `Extract the exact merchant name, total transaction dollar amount, and date from this credit card alert email text blob. Do not extract informational emails, only actual financial expenses/charges where a card was charged. If this is an informational update or spam without a specific financial charge, return 0 for amount.
+            
+Email Content:
+${body.slice(0, 3000)}`;
 
-            // 2. Merchant is heavily variable. Try a suite of standard preceding/succeeding keywords in plain text.
-            const merchantRegexes = [
-                // "Merchant: Target"
-                /(?:Merchant|Where|Description|Payee|Charge made at|Transaction Details|\bat|to\b)\s*:?-?\s*([\w\s\'&*#.-]+?)(?:\s+(?:on|for|has been|to|Amount|Date|Account|-|$))/i,
-                // "at Target on"
-                /\s(?:at|to)\s+([\w\s\'&*#.-]{2,40}?)\s+(?:on|for|has been)/i,
-                // "authorized a charge of $X at Target."
-                /authorized a \w+ of \$[0-9.,]+ at (.{2,40}?)(?:\s+on|\.|\s+was authorized|$)/i,
-                // "A charge of $X at Target was authorized..."
-                /charge of \$[0-9.,]+ at (.{2,40}?)(?:\s+on|\.|\s+was authorized|$)/i,
-                // "paid $X to Target"
-                /paid \$[0-9.,]+ to ([\w\s\'&*#.-]{2,40}?)(?:\s+for|\.|$)/i,
-                // Tabular layout fallback (e.g. "RENTERS INS EXCEED   $16.42*")
-                // Looks for strictly uppercase words (min 3 chars), followed by any amount of whitespace/asterisks, followed by a dollar sign
-                /([A-Z0-9\s'&*-]{3,40}?)[*\s]+\$[\d,]+(?:\.\d{2})?/
-            ];
+            const result = await model.generateContent(promptStr);
+            console.log(`Pinging Gemini for email ${email.id}...`);
+            const responseText = result.response.text();
 
-            // Dedicated Amex "Card Not Present" Override
-            // Looks for the exact phrasing: "at the time of purchase. RENTERS INS EXCEED $16.42"
-            const amexNotPresentRegex = /time of purchase\.?\s*([A-Z0-9\s'&*#.-]{3,40}?)\s+\$([\d,]+(?:\.\d{2})?)/i;
-            const amexMatch = body.match(amexNotPresentRegex);
+            const extracted = JSON.parse(responseText);
 
-            // Explicit Table format override
-            // Directly targets formats like "Merchant: UBR PENDING Amount: $29.65" and handles intermediate fields like Date
-            const explicitTableRegex = /(?:Merchant|Description|Payee|Where)\s*:?-?\s*([A-Za-z0-9\s\'&*#.\-\/]{2,50}?)\s+[\s\S]{0,150}?(?:Amount|Total|Charge)\s*:?-?\s*\$?([\d,]+(?:\.\d{2})?)/i;
-            const tableMatch = body.match(explicitTableRegex);
+            // Sanity check
+            if (extracted && typeof extracted.amount === 'number' && typeof extracted.merchant === 'string') {
+                if (extracted.amount <= 0 || extracted.merchant.length < 2) continue; // Skip invalid or $0
 
-            // Reverse Table format override (e.g. Bank of America: "Amount: $16.53 ... Where: AMAZON PRIME PMTS View details")
-            const explicitTableReverseRegex = /(?:Amount|Total|Charge)\s*:?-?\s*\$?([\d,]+(?:\.\d{2})?)[\s\S]{0,150}?(?:Merchant|Description|Payee|Where)\s*:?-?\s*([A-Za-z0-9\s\'&*#.\-\/]{2,50}?)(?:\s+(?:View|Click|The|This|Date|Amount|Your|Account|Contact|Questions|If|$))/i;
-            const reverseTableMatch = body.match(explicitTableReverseRegex);
-
-            if (amexMatch) {
-                merchant = amexMatch[1].trim();
-                // Override the amountMatch array so it uses the exact amount tied to the merchant
-                finalAmountMatch = [amexMatch[0], amexMatch[2]];
-            } else if (tableMatch) {
-                merchant = tableMatch[1].trim();
-                finalAmountMatch = [tableMatch[0], tableMatch[2]];
-            } else if (reverseTableMatch) {
-                merchant = reverseTableMatch[2].trim();
-                finalAmountMatch = [reverseTableMatch[0], reverseTableMatch[1]];
-            } else {
-                for (let regex of merchantRegexes) {
-                    const match = body.match(regex);
-                    if (match && match[1]) {
-                        const extracted = match[1].trim();
-                        const lowerExtracted = extracted.toLowerCase();
-                        // Advanced sanity check to prevent grabbing parts of other sentences or common banking fluff
-                        const isInvalid =
-                            lowerExtracted.length <= 1 ||
-                            lowerExtracted.length > 40 ||
-                            lowerExtracted.startsWith('your') ||
-                            lowerExtracted.startsWith('view') ||
-                            lowerExtracted.startsWith('click') ||
-                            lowerExtracted.includes('the number') ||
-                            lowerExtracted.includes('account ending') ||
-                            lowerExtracted.includes('card ending') ||
-                            lowerExtracted.includes('manage your') ||
-                            lowerExtracted.includes('privacy policy') ||
-                            lowerExtracted.includes('terms of service') ||
-                            lowerExtracted === 'ion' ||
-                            lowerExtracted === 'ation';
-
-                        if (!isInvalid) {
-                            merchant = extracted;
-                            // 1. Amount is usually the first noticeable currency figure. Grab it only if we passed merchant validation.
-                            finalAmountMatch = body.match(/(?:Amount|Charge Amount|Transaction Amount|Total|Purchase Amount|balance)[\s\S]*?\$([\d,]+(?:\.\d{2})?)/i) ||
-                                body.match(/\$([\d,]+(?:\.\d{2})?)/) ||
-                                body.match(/\$\s*([\d,]+(?:\.\d{2})?)/);
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if (merchant === 'Unknown Merchant' || !finalAmountMatch || !finalAmountMatch[1]) {
-                // Ignore missing or malformed records
-            } else {
-                const amount = parseFloat(finalAmountMatch[1].replace(/,/g, ''));
-
-                // Final clean up and garbage filter
-                merchant = merchant.replace(/[\\*_~`$]/g, '').trim();
-                // strip out trailing text like .com, Inc, LLC if needed, but for now just trim
-                if (isNaN(amount) || merchant === 'Unknown Merchant' || merchant.length > 40 || merchant.length < 2 || amount <= 0) {
-                    continue;
+                // Fallback date and standardizing formatting
+                let finalDate = extracted.date;
+                try {
+                    finalDate = new Date(finalDate).toISOString();
+                } catch {
+                    finalDate = dateHeader ? new Date(dateHeader.value).toISOString() : new Date(parseInt(email.internalDate)).toISOString();
                 }
 
-                transactions.push({
+                // Standardize merchant name
+                let cleanMerchant = extracted.merchant.replace(/[\\*_~`$^]/g, '').trim();
+
+                const tx = {
                     id: email.id,
-                    date: finalIsoDate,
-                    amount: amount,
-                    merchant: merchant,
-                    category: categorizeMerchant(merchant)
-                });
+                    date: finalDate,
+                    amount: extracted.amount,
+                    merchant: cleanMerchant,
+                    category: categorizeMerchant(cleanMerchant)
+                };
+
+                transactions.push(tx);
+                cache[email.id] = tx; // Add to cache dictionary
+                cacheUpdated = true;
+
+                // Rate limit padding to avoid 429 Too Many Requests
+                await delay(350);
             }
         } catch (err) {
-            console.warn('Failed to parse an email: ', err);
+            console.error('Failed to parse email with Gemini: ', err);
+            if (err.toString().includes("429")) {
+                console.warn("Hit Gemini Rate Limit. Stopping early.");
+                break; // Break loop on 429 quota exhaustion so we don't spam 50 errors in a row
+            }
         }
+    }
+
+    if (cacheUpdated) {
+        localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
     }
 
     return transactions;

@@ -25,7 +25,7 @@ function App() {
                 const rawEmails = await fetchCreditCardEmails(tokenResponse.access_token);
                 console.log(`Fetched ${rawEmails.length} emails. Parsing...`);
 
-                const parsedTxs = parseExpenseEmails(rawEmails);
+                const parsedTxs = await parseExpenseEmails(rawEmails, import.meta.env.VITE_GEMINI_API_KEY);
                 console.log(`Parsed ${parsedTxs.length} transactions. Updating state...`);
                 setTransactions(parsedTxs);
             } catch (err) {
