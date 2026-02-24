@@ -1,6 +1,6 @@
-# Amex Expense Tracker
+# Expense Tracker
 
-A beautiful, privacy-first expense tracking dashboard built with React that pulls your Amex transaction emails directly from your Gmail inbox using the client-side Google API—no backend server required.
+A beautiful, privacy-first expense tracking dashboard built with React that pulls your credit card transaction emails directly from your Gmail inbox using the client-side Google API—no backend server required.
 
 Designed to be hosted anywhere as a web application or compiled into a native iOS/Android app using CapacitorJS.
 
